@@ -160,6 +160,49 @@ func TestEnqueueTaskIdConflictError(t *testing.T) {
 	}
 }
 
+func TestEnqueueQueueCache(t *testing.T) {
+	r := setup(t)
+	defer r.Close()
+	t1 := h.NewTaskMessageWithQueue("sync1", nil, "q1")
+	t2 := h.NewTaskMessageWithQueue("sync2", nil, "q2")
+	t3 := h.NewTaskMessageWithQueue("sync3", nil, "q1")
+
+	err := r.Enqueue(context.Background(), t1)
+	if err != nil {
+		t.Fatalf("(*RDB).Enqueue(msg) = %v, want nil", err)
+	}
+
+	// Check queue is in the AllQueues set.
+	if !r.client.SIsMember(context.Background(), base.AllQueues, t1.Queue).Val() {
+		t.Fatalf("%q is not a member of SET %q", t1.Queue, base.AllQueues)
+	}
+
+	err = r.Enqueue(context.Background(), t2)
+	if err != nil {
+		t.Fatalf("(*RDB).Enqueue(msg) = %v, want nil", err)
+	}
+
+	if !r.client.SIsMember(context.Background(), base.AllQueues, t2.Queue).Val() {
+		t.Fatalf("%q is not a member of SET %q", t2.Queue, base.AllQueues)
+	}
+
+	// Delete q1 from AllQueues
+	err = r.client.SRem(context.Background(), base.AllQueues, "q1").Err()
+	if err != nil {
+		t.Fatalf("Redis SREM = %v, want nil", err)
+	}
+
+	// Enqueue another task to q1, won't update the queue because already cached in-memory
+	err = r.Enqueue(context.Background(), t3)
+	if err != nil {
+		t.Fatalf("(*RDB).Enqueue(msg) = %v, want nil", err)
+	}
+
+	if r.client.SIsMember(context.Background(), base.AllQueues, t3.Queue).Val() {
+		t.Fatalf("%q is a member of SET %q", t3.Queue, base.AllQueues)
+	}
+}
+
 func TestEnqueueUnique(t *testing.T) {
 	r := setup(t)
 	defer r.Close()
